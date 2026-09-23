@@ -16,7 +16,7 @@
 ## 1. 安装 Codex Plugin
 
 ```sh
-codex plugin marketplace add DennyWanye/agentchat-codex-plugin --ref main
+codex plugin marketplace add https://github.com/DennyWanye/agentchat-codex-plugin.git --ref main
 codex plugin add agentchat-codex@agentchat-public
 ```
 

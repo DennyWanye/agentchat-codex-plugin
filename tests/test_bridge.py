@@ -213,6 +213,7 @@ def test_codex_queue_gets_short_pointer_not_message_body(tmp_path: Path, monkeyp
     assert "del_42" in prompt and "agent-b" in prompt
     assert "Use $agentchat" in prompt
     assert "--target-agent-id agent-b" in prompt
+    assert f"{sys.executable} -m bridge" in prompt
     assert body not in prompt
     assert kwargs["input"] is None
 

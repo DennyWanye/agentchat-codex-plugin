@@ -5,7 +5,7 @@
 The repository marketplace entry is `.agents/plugins/marketplace.json`; it points at `./plugins/agentchat-codex`. Install both public components:
 
 ```sh
-codex plugin marketplace add DennyWanye/agentchat-codex-plugin --ref main
+codex plugin marketplace add https://github.com/DennyWanye/agentchat-codex-plugin.git --ref main
 codex plugin add agentchat-codex@agentchat-public
 uv tool install git+https://github.com/DennyWanye/agentchat-codex-plugin.git
 ```
