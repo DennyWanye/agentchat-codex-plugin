@@ -1,0 +1,7 @@
+interface:
+  display_name: "AgentChat for Codex"
+  short_description: "Passively receive AgentChat messages in Codex"
+  default_prompt: "Use $agentchat to bind this Codex task to a local AgentChat bridge and handle an incoming message safely."
+
+policy:
+  allow_implicit_invocation: true

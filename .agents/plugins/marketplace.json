@@ -1,0 +1,20 @@
+{
+  "name": "agentchat-public",
+  "interface": {
+    "displayName": "AgentChat Public Plugins"
+  },
+  "plugins": [
+    {
+      "name": "agentchat-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agentchat-codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

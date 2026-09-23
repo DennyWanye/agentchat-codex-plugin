@@ -1,0 +1,38 @@
+{
+  "name": "agentchat-codex",
+  "version": "0.1.0",
+  "description": "Connect a pre-bound Codex task to AgentChat through a local passive bridge.",
+  "author": {
+    "name": "Denny Wanye",
+    "url": "https://github.com/DennyWanye"
+  },
+  "homepage": "https://github.com/DennyWanye/agentchat-codex-plugin",
+  "repository": "https://github.com/DennyWanye/agentchat-codex-plugin",
+  "license": "MIT",
+  "keywords": [
+    "agentchat",
+    "codex",
+    "bridge",
+    "passive-trigger",
+    "messaging"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AgentChat for Codex",
+    "shortDescription": "Passively receive AgentChat messages in Codex",
+    "longDescription": "Instruction and safety guidance for binding a local AgentChat bridge to one Codex task. The bridge owns long-polling and delivery; this plugin does not run a daemon or grant remote messages additional permissions.",
+    "developerName": "Denny Wanye",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use $agentchat to configure passive AgentChat delivery.",
+      "Use $agentchat to inspect a received AgentChat file safely.",
+      "Use $agentchat to troubleshoot the local bridge."
+    ],
+    "brandColor": "#2563EB"
+  }
+}
