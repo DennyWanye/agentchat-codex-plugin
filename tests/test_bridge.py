@@ -140,7 +140,7 @@ def test_lost_ack_redelivery_does_not_dispatch_handler_twice(tmp_path: Path):
     with pytest.raises(RemoteError, match="ACK response lost"):
         daemon.process_once(timeout_ms=1_000)
     pending = store.get("del_ack_lost")
-    assert pending and pending.status == "pending" and pending.outcome == {"status": "dispatched"}
+    assert pending and pending.status == "pending" and pending.outcome["status"] == "dispatched" and pending.outcome["host"]["status"] == "queued"
     completed = daemon.process_once(timeout_ms=1_000)
     assert completed and completed.status == "acked"
     assert seen == [{"text": "once"}]
@@ -200,7 +200,7 @@ def test_codex_queue_gets_short_pointer_not_message_body(tmp_path: Path, monkeyp
         stdout = "queued"
         stderr = ""
 
-    monkeypatch.setattr("bridge.daemon.subprocess.run", lambda *args, **kwargs: calls.append((args, kwargs)) or Completed())
+    monkeypatch.setattr("bridge.daemon.run_bounded", lambda *args, **kwargs: calls.append((args, kwargs)) or Completed())
     handler = Handler(codex_thread="thread-1", inbox_path=tmp_path / "inbox.sqlite3")
     body = "x" * (256 * 1024)
     result = handler.run({"delivery_id": "del_42", "sender": {"agent_id": "agent-b"}}, {"type": "inline_text_file", "content": body})

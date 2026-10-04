@@ -11,6 +11,7 @@ from .config import BridgeConfig
 from .errors import AuthenticationError, ProtocolError
 from .store import CredentialStore
 from .transport import JsonRpcTransport
+from .messages import validate_message
 
 
 def _wire(prefix: str, ident_prefix: str) -> tuple[str, str]:
@@ -76,6 +77,8 @@ class AgentChatClient:
 
     def _load_credentials(self) -> Credentials | None:
         raw = self.credential_store.load()
+        if raw and raw.get("endpoint") and raw["endpoint"] != self.config.endpoint:
+            raise ValueError("profile endpoint differs from credential endpoint; use the original endpoint")
         return Credentials.from_dict(raw) if raw else None
 
     def _save(self) -> None:
@@ -91,8 +94,8 @@ class AgentChatClient:
         return self.credentials
 
     def pair(self, pair_token: str, *, display_name: str = "Codex Bridge", description: str = "local Codex passive bridge", instance_id: str | None = None) -> Credentials:
-        if self.credentials is not None and self.credentials.state == "pending":
-            raise ValueError("a pairing is pending; run `pair --recover` or `revoke-local` first")
+        if self.credentials is not None:
+            raise ValueError("profile already paired or pending; recover it, leave it, or use a new --state-dir")
         recovery, pairing_id = _wire("pr2", "pair_")
         refresh, credential_id = _wire("ar2", "cred_")
         # Persist every recovery secret before consuming the one-time token.
@@ -148,6 +151,14 @@ class AgentChatClient:
         except AuthenticationError:
             self._exchange_refresh()
 
+    def release_registration(self) -> None:
+        if not self.credentials or self.credentials.state != "active":
+            return
+        transport = JsonRpcTransport(self.config.endpoint, timeout=3, retries=0,
+                                     context=self.transport.context)
+        transport.call("register_agent", {"action": "release", "instance_id": self.credentials.instance_id},
+                       bearer=self.credentials.access_token)
+
     def _call(self, method: str, arguments: dict[str, Any] | None = None) -> Any:
         credentials = self._require_active()
         try:
@@ -159,6 +170,7 @@ class AgentChatClient:
     def send(self, *, target: dict[str, Any], message: dict[str, Any], client_message_id: str | None = None) -> Any:
         import uuid
 
+        validate_message(message)
         payload = {"client_message_id": client_message_id or f"cm_{uuid.uuid4().hex}", "target": target, "message": message}
         return self._call("send_message", payload)
 

@@ -13,6 +13,7 @@ from .errors import AuthenticationError, ProtocolError, RemoteError
 
 
 class JsonRpcTransport:
+    MAX_RESPONSE_BYTES = 4 * 1024 * 1024
     def __init__(self, endpoint: str, *, timeout: float = 35.0, retries: int = 3, backoff: float = 0.5, context: ssl.SSLContext | None = None):
         self.endpoint = endpoint
         self.timeout = timeout
@@ -48,10 +49,15 @@ class JsonRpcTransport:
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout, context=self.context) as response:
                     status = int(response.status)
-                    raw = response.read()
+                    raw = response.read(self.MAX_RESPONSE_BYTES + 1)
+                    if len(raw) > self.MAX_RESPONSE_BYTES:
+                        raise ProtocolError("server response exceeds 4 MiB")
                 return self._decode(raw, status)
             except urllib.error.HTTPError as exc:
-                raw = exc.read()
+                try:
+                    raw = exc.read(65536)
+                finally:
+                    exc.close()
                 if exc.code in {401, 403}:
                     raise AuthenticationError(self._error_text(raw), status=exc.code) from exc
                 if exc.code == 429 or exc.code >= 500:

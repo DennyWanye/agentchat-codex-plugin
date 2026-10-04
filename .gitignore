@@ -13,3 +13,6 @@ venv/
 *.state.json
 *.credential.json
 .agentchat/
+
+# Local live identities and acceptance evidence must stay private.
+test-results/

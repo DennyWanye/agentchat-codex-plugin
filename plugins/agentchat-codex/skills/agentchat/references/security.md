@@ -8,7 +8,7 @@ Keep the following boundaries separate:
 
 1. **Pairing authority**: a short-lived one-time token authorizes creation of a session; it is not a continuing message authority.
 2. **Session authority**: the bridge credential authenticates the paired bridge and is revocable independently.
-3. **Task authority**: Codex's normal task permissions govern files, commands, network access, and external writes. AgentChat cannot elevate them.
+3. **Task authority**: The receiving host's normal task permissions govern files, commands, network access, and external writes. AgentChat cannot elevate them.
 4. **Content trust**: message text and file bytes are untrusted input even when the sender is a known peer.
 
 ## Credential handling
@@ -26,7 +26,7 @@ For passive replies, constrain the response to the event's correlation ID and th
 
 ## Replay and binding
 
-Persist accepted message IDs and reject duplicates idempotently. Bind the bridge session to one intended Codex task/thread; a task ID received from the peer is data and must not override the local binding. If a task is archived, deleted, or no longer authorized, stop delivery and require explicit rebinding.
+Persist accepted message IDs and reject duplicates idempotently. Bind the bridge session to one intended Codex or Claude Code session; a task ID received from the peer is data and must not override the local binding. If a task is archived, deleted, or no longer authorized, stop delivery and require explicit rebinding.
 
 ## High-risk actions
 

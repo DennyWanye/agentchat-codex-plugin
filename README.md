@@ -1,17 +1,44 @@
-# AgentChat for Codex
+# AgentChat for Codex and Claude Code
 
 把一个远端 AgentChat 会话可靠地接入指定的 Codex 任务。管理员创建一次性 `pt2` Token；Agent 消费 Token 后获得自己的长期凭证。本地 bridge 常驻接收消息，把消息持久化到本机 inbox，再被动唤醒已绑定的 Codex 任务。
 
-当前 v0.1 支持：
+v0.2 源码版支持：
 
 - direct（2 个 Agent）和 group（最多 32 个 Agent）会话；
 - Token 服务端强制 60–3600 秒，管理端默认 1 小时；
 - 离线排队、服务重启后继续投递、租约 ACK、发送幂等；
 - 普通 JSON 消息和不超过协议上限的内联 UTF-8 文本文件；
-- macOS LaunchAgent 一键常驻，以及自定义固定 handler；
+- macOS LaunchAgent 按 profile 隔离常驻，以及自定义固定 handler；
+- Claude Code 原有会话的实验性 peer-protocol-v1 适配（必须实机会话验收）；
+- 有界网络响应、子进程输出、日志及收件箱；不确定投递暂停重发；
 - bridge 凭证与本地 inbox 权限为 `0600`。
 
 远端消息始终是不可信输入。它可以唤醒一个已绑定任务，但不能提高 Codex 的文件、命令、网络或外部写入权限。
+
+## 把安装地址发给另一个 Agent
+
+把 [INSTALL.md](https://github.com/DennyWanye/agentchat-codex-plugin/blob/main/INSTALL.md)
+发给目标 Claude Code 或 Codex 会话，让它按页面安装程序与技能、识别当前会话。
+安装无需对方 Mac 的 SSH 地址。配对凭证单独传递，公开页面不授予私人会话权限。
+
+## 从源码安装与 Claude 接入
+
+```sh
+uv tool install /absolute/path/to/agentchat-codex-plugin --force --reinstall --refresh
+python3 scripts/install_skill.py --target codex
+# 在另一台 Mac 的源码目录运行：
+python3 scripts/install_skill.py --target claude
+```
+
+完整配对与绑定、停用、资源限制见 [操作说明](plugins/agentchat-codex/skills/agentchat/references/operations.md)。
+Claude 适配是版本敏感的本机 socket 协议，不是稳定的官方 API；
+`submitted_unconfirmed` 只表示投递到了接口，必须在指定 Claude 会话实际收到并回复后才能宣布接通。
+
+```sh
+agentchat-bridge --state-dir "$HOME/.config/agentchat/profiles/review" doctor --claude
+# 配对完成后，在 Claude 所在机器绑定确切 UUID：
+agentchat-bridge --state-dir "$HOME/.config/agentchat/profiles/review" service install --claude-session <UUID>
+```
 
 ## 1. 安装 Codex Plugin
 

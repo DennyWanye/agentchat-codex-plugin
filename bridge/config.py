@@ -45,9 +45,9 @@ class BridgeConfig:
         }
         values.update(overrides)
         values["poll_timeout_ms"] = min(25_000, max(1_000, int(values["poll_timeout_ms"])))
-        values["retry_count"] = max(0, int(values["retry_count"]))
-        values["retry_backoff"] = max(0.0, float(values["retry_backoff"]))
-        values["request_timeout"] = max(1.0, float(values["request_timeout"]))
+        values["retry_count"] = min(5, max(0, int(values["retry_count"])))
+        values["retry_backoff"] = min(2.0, max(0.0, float(values["retry_backoff"])))
+        values["request_timeout"] = min(60.0, max(1.0, float(values["request_timeout"])))
         state_dir = Path(values["state_dir"]).expanduser()
         state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:

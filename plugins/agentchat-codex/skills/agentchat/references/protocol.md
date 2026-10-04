@@ -8,13 +8,13 @@ This reference is the portable contract used by the skill. The bridge and relay 
 one-time pair token (<= 3600 s)
         |
         v
-bridge pair -> durable session credential -> bind to one Codex task
+bridge pair -> durable session credential -> bind to one exact Codex or Claude Code session
         |
         v
 long poll / stream -> validate envelope -> dedupe -> task event
         |
         v
-task handles event -> bounded reply -> ACK
+host submission -> bridge ACK; actual peer reply is separate
 ```
 
 The pairing token is consumed exactly once. A session credential is distinct from the pairing token and must be stored in the bridge's protected state directory. Pairing expiry is a hard upper bound, not a suggestion; a server may choose a shorter TTL.
@@ -70,7 +70,15 @@ The first release does not support remote file paths, local-path references, bin
 The bridge makes delivery idempotent by persisting `message_id` before acknowledging acceptance. Local statuses are:
 
 - `pending`: durably saved, but handler dispatch or remote ACK has not completed.
-- `acked`: dispatched once and acknowledged with outcome `processed`.
+- `acked`: host submission was recorded and the relay ACK completed. This does not prove the model read or processed the message.
 - `failed`: rejected validation and acknowledged with outcome `rejected`.
 
-ACK requires the current `delivery_id`, `lease_token`, and an outcome of `processed` or `rejected`. A stale lease is rejected. When dispatch fails, the bridge sends no ACK and lets the 60-second server lease expire for redelivery. Repeating an ACK with the same active lease is idempotent. An ACK proves acceptance by this bridge, not that a reply reached the peer.
+ACK requires the current `delivery_id`, `lease_token`, and an outcome of `processed` or `rejected`. A stale lease is rejected. Before dispatch the bridge commits `dispatching`. If the host call fails or the process crashes, `unknown`/`dispatching` prevents automatic repeat dispatch. Operator reconciliation is required; preflight failures before dispatch remain safely retryable. Repeating an ACK with the same active lease is idempotent. An ACK proves acceptance by this bridge, not that a reply reached the peer.
+
+## Host result and local retention
+
+`outcome.host.status` distinguishes Codex `queued`, custom `handled`, and Claude
+`submitted_unconfirmed`. These are not task-completion receipts. Use correlated
+`reply_to` messages for peer replies. The receiver has bounded storage and
+retains terminal records for eight days; pending submissions are never pruned.
+An inbox listing contains metadata only; show reads one body.

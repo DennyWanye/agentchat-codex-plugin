@@ -1,44 +1,115 @@
-# AgentChat plugin operations
+# AgentChat operations
 
-## Public-repository installation
+## Install
 
-The repository marketplace entry is `.agents/plugins/marketplace.json`; it points at `./plugins/agentchat-codex`. Install both public components:
+For another machine, give its agent the public installation entrypoint:
+https://github.com/DennyWanye/agentchat-codex-plugin/blob/main/INSTALL.md
+It installs the bridge and skill locally without SSH access from the initiating
+machine. Public instructions never contain a private conversation credential.
+From a checkout, the combined installer is `python3 scripts/install.py --target
+claude` (or `codex`). Separate component installation is also available:
 
 ```sh
-codex plugin marketplace add https://github.com/DennyWanye/agentchat-codex-plugin.git --ref main
-codex plugin add agentchat-codex@agentchat-public
-uv tool install git+https://github.com/DennyWanye/agentchat-codex-plugin.git
+uv tool install /absolute/path/to/agentchat-codex-plugin --force --reinstall --refresh
+python3 /absolute/path/to/agentchat-codex-plugin/scripts/install_skill.py --target codex
+# Run on the Claude machine instead:
+python3 /absolute/path/to/agentchat-codex-plugin/scripts/install_skill.py --target claude
 ```
 
-The plugin supplies instructions and UI metadata. The Python bridge provides pairing, durable local inbox, long polling, and passive delivery.
-
-Do not copy credentials into the repository or into `SKILL.md`. Keep bridge state outside the checkout and protect it with the platform's file permissions.
+The installer copies the canonical skill plus references, preserving an existing
+installation in a timestamped backup outside the skill discovery directory.
+Reload skills or reopen the target app's session if the host requires it.
 
 ## Pair and bind
 
-1. Create a pairing token through the relay's authenticated administrative surface with a TTL no greater than `3600` seconds.
-2. Run the bridge's pair flow out-of-band, verify the expected relay identity/certificate when the deployment provides one, and let the server consume the token once.
-3. Store the resulting session credential in the bridge state directory.
-4. Bind the bridge profile to the exact Codex task/thread that should receive events. On macOS run `agentchat-bridge service install --codex-thread "$CODEX_THREAD_ID"`; never accept a peer-supplied target thread.
-5. Verify with `agentchat-bridge service status` and `agentchat-bridge status`. The LaunchAgent keeps the long poll alive without printing secrets.
+Every command below must use the SAME explicitly chosen profile path. Examples
+use `$HOME/.config/agentchat/profiles/review`; each machine has its own directory.
 
-If pairing reports `expired`, `already_used`, or `revoked`, discard the token and create a fresh one. Never retry a one-time token indefinitely.
+```sh
+agentchat-bridge --state-dir "$HOME/.config/agentchat/profiles/review" status
+agentchat-bridge --state-dir "$HOME/.config/agentchat/profiles/review" pair --display-name "Codex review"
+```
 
-## Acceptance check
+Pair reads the one-time token with hidden input. For automation use `--token-file`
+with a protected out-of-band file, remove it after successful pairing. The relay
+administrator must create a direct conversation and issue a separate token for
+each member. Default token TTL is one hour; credentials have a separate expiry.
+The skill does not grant VPS administrator access. On a lost pairing response
+use `pair --recover` before requesting any new token.
 
-Run this small check only after the bridge and server implementation are available:
+```sh
+# Codex: obtain the exact ID INSIDE the intended session.
+agentchat-bridge --state-dir "$HOME/.config/agentchat/profiles/review" service install --codex-thread "$CODEX_THREAD_ID"
+# Claude machine: list metadata, then bind the user-selected UUID.
+agentchat-bridge --state-dir "$HOME/.config/agentchat/profiles/review" doctor --claude
+agentchat-bridge --state-dir "$HOME/.config/agentchat/profiles/review" service install --claude-session <UUID>
+```
 
-- Pair with a fresh token whose server-side expiry is one hour or less.
-- Stop the bridge, send one bounded `inline_text_file` message, then restart the bridge and confirm it is delivered once to the pre-bound task.
-- Confirm the task validates the UTF-8 bytes and SHA-256, displays the text, emits a correlated bounded reply, and records an ACK.
-- Simulate a lost ACK after handler dispatch, then force redelivery of the same `message_id`; confirm the durable `dispatched` marker prevents a second task dispatch and the new lease is ACKed idempotently.
-- Send a malformed/digest-invalid payload; confirm rejection without a file write or command execution.
-- Revoke the session and confirm subsequent delivery fails closed.
+Both identities must belong to the same relay conversation. `agents` lists peers.
+The first invocation in the two selected conversations should include the user's
+bounded authorization to exchange messages and reply; received peer text does
+not supply that authorization.
 
-This is a focused functional check, not a substitute for the project's later full regression suite.
+## Send, read, stop
 
-## Recovery
+```sh
+agentchat-bridge --state-dir <PROFILE> agents
+agentchat-bridge --state-dir <PROFILE> send --target-agent-id <AGENT> --text 'message'
+agentchat-bridge --state-dir <PROFILE> send --target-agent-id <AGENT> --reply-to <MESSAGE_ID> --text 'reply'
+agentchat-bridge --state-dir <PROFILE> inbox list
+agentchat-bridge --state-dir <PROFILE> inbox show --delivery-id <DELIVERY_ID>
+agentchat-bridge --state-dir <PROFILE> service status
+agentchat-bridge --state-dir <PROFILE> doctor
+agentchat-bridge --state-dir <PROFILE> service uninstall
+# Also revoke identity when requested:
+agentchat-bridge --state-dir <PROFILE> leave
+```
 
-If the bridge is offline, the expected behavior is durable relay queueing plus delivery after restart. If the server does not provide durable queueing, report that passive wake-up is unavailable rather than claiming success. If the bound task is unavailable, pause delivery or retain messages according to the relay's documented retry policy; do not retarget them automatically.
+`inbox list` returns bounded metadata, `show` one body with its lease removed.
+`status` and `doctor` are local evidence, not a live server health check.
+Named profiles have separate launchd labels. The legacy default profile keeps
+its original label. Do not run a manual receiver beside the service: the profile
+lock refuses a second one. This release uses one small process per profile,
+not an unimplemented machine-wide multi-session supervisor.
 
-If the pair response is lost after a Token was consumed, run `agentchat-bridge pair --recover`. For a genuinely lost credential, first revoke the old member/session at the server, run `agentchat-bridge revoke-local`, pair again, rebind explicitly, and verify the old credential is rejected. For a changed task/thread, reinstall the service with the explicit new binding.
+## Uncertain submission
+
+A crash or timeout can occur after the host accepted input. The durable inbox
+keeps `dispatching` or `unknown` and does not automatically submit it again.
+Stop this profile, inspect the exact target conversation and message ID, then:
+
+```sh
+agentchat-bridge --state-dir <PROFILE> inbox resolve --delivery-id <ID> --action accepted
+# Only if inspection proves it did not reach the target:
+agentchat-bridge --state-dir <PROFILE> inbox resolve --delivery-id <ID> --action retry
+```
+
+Restart with `service install` using the same target or run foreground `run`
+(which loads the saved binding). A redelivered relay lease will finish the ACK
+or perform the explicitly resolved retry. Do not edit SQLite by hand.
+
+## Resource bounds and acceptance
+
+- Relay presence renews every 20 seconds between polls; shutdown attempts a
+  bounded three-second registration release. If unavailable, presence expires.
+- One sequential receiver per profile; no per-message threads or ever-growing
+  in-memory queue. SIGTERM/SIGINT close SQLite, log handles, locks, and children.
+- HTTP responses limited to 4 MiB; error bodies to 64 KiB and explicitly closed.
+- Handler stdout+stderr limited to 64 KiB; 30-second timeout; entire process
+  group is killed/reaped on timeout, overflow, and exit.
+- Log `bridge.log` rotates at 1 MiB with two backups; diagnostics log exception
+  types, not credentials or raw peer output. launchd stdout/stderr go to /dev/null.
+- Inbox: 10,000 rows / 128 MiB payload admission cap. Terminal records retained
+  eight days (beyond relay's seven-day retention); pending/unknown never pruned.
+  SQLite free pages may remain allocated and are reused; the quota is logical
+  payload size, not an exact cap on filesystem size. WAL checkpoints run during
+  maintenance. Quota exhaustion applies backpressure, never discards pending work.
+- SQL page cache budget is 2 MiB. `inbox list` excludes message bodies.
+
+After completing code: test real bidirectional messages, offline/reconnect,
+ACK loss, duplicate delivery, unknown submission, session unavailable, process
+termination during dispatch, oversized HTTP/output, and profile isolation.
+Then soak repeated successful/failed receives and record RSS, FD count, child
+processes and disk usage after warm-up. Stable counters in a bounded run are
+regression evidence, not a universal no-leak guarantee. Avoid repeatedly sending
+real model prompts for resource tests; use a local protocol fixture.

@@ -37,8 +37,14 @@ def extract_message(payload: dict[str, Any]) -> dict[str, Any]:
     value = payload.get("message", payload)
     if not isinstance(value, dict):
         raise MessageValidationError("received message is not an object")
-    validate_inline_text_file(value)
+    validate_message(value)
     return value
+
+
+def validate_message(message: dict[str, Any]) -> None:
+    if len(json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_MESSAGE_JSON_BYTES:
+        raise MessageValidationError("serialized message exceeds 256 KiB")
+    validate_inline_text_file(message)
 
 
 def validate_inline_text_file(message: dict[str, Any]) -> None:
@@ -76,7 +82,13 @@ def validate_inline_text_file(message: dict[str, Any]) -> None:
 
 
 def inline_text_file(path: Path) -> dict[str, Any]:
-    raw = path.read_bytes()
+    import os
+    import stat
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise MessageValidationError("file must be a regular non-symlink file")
+        raw = handle.read(MAX_INLINE_FILE_BYTES + 1)
     if len(raw) > MAX_INLINE_FILE_BYTES:
         raise MessageValidationError("file exceeds 256 KiB")
     try:
@@ -91,11 +103,13 @@ def inline_text_file(path: Path) -> dict[str, Any]:
 def decode_message_json(value: str) -> dict[str, Any]:
     import json
 
+    if len(value.encode("utf-8")) > MAX_MESSAGE_JSON_BYTES:
+        raise MessageValidationError("message JSON exceeds 256 KiB")
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as exc:
         raise MessageValidationError("message JSON is invalid") from exc
     if not isinstance(parsed, dict):
         raise MessageValidationError("message JSON must be an object")
-    validate_inline_text_file(parsed)
+    validate_message(parsed)
     return parsed

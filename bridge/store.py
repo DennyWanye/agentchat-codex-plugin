@@ -28,7 +28,10 @@ class CredentialStore:
     def load(self) -> dict[str, Any] | None:
         try:
             with self.path.open(encoding="utf-8") as fh:
-                value = json.load(fh)
+                raw = fh.read(65537)
+                if len(raw) > 65536:
+                    raise ValueError("local state file exceeds 64 KiB")
+                value = json.loads(raw)
         except FileNotFoundError:
             return None
         if not isinstance(value, dict):
@@ -77,6 +80,9 @@ class InboxStore:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA busy_timeout=30000")
+        self._db.execute("PRAGMA cache_size=-2048")
+        self._db.execute("PRAGMA journal_size_limit=4194304")
+        self._db.execute("PRAGMA wal_autocheckpoint=256")
         self._db.executescript(
             """
             CREATE TABLE IF NOT EXISTS deliveries (
@@ -90,6 +96,20 @@ class InboxStore:
               handled_at TEXT
             );
             CREATE INDEX IF NOT EXISTS deliveries_status_idx ON deliveries(status);
+            CREATE TABLE IF NOT EXISTS inbox_usage (
+              id INTEGER PRIMARY KEY CHECK(id=1), rows INTEGER NOT NULL, bytes INTEGER NOT NULL
+            );
+            INSERT OR IGNORE INTO inbox_usage
+              SELECT 1,COUNT(*),COALESCE(SUM(length(CAST(payload AS BLOB))),0) FROM deliveries;
+            CREATE TRIGGER IF NOT EXISTS usage_insert AFTER INSERT ON deliveries BEGIN
+              UPDATE inbox_usage SET rows=rows+1, bytes=bytes+length(CAST(new.payload AS BLOB)) WHERE id=1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS usage_delete AFTER DELETE ON deliveries BEGIN
+              UPDATE inbox_usage SET rows=rows-1, bytes=bytes-length(CAST(old.payload AS BLOB)) WHERE id=1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS usage_update AFTER UPDATE OF payload ON deliveries BEGIN
+              UPDATE inbox_usage SET bytes=bytes+length(CAST(new.payload AS BLOB))-length(CAST(old.payload AS BLOB)) WHERE id=1;
+            END;
             """
         )
         columns = {str(row["name"]) for row in self._db.execute("PRAGMA table_info(deliveries)").fetchall()}
@@ -106,13 +126,22 @@ class InboxStore:
 
     def put(self, delivery_id: str, message_id: str, lease_token: str, payload: dict[str, Any]) -> StoredDelivery:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if len(encoded.encode()) > 512 * 1024:
+            raise ValueError("delivery envelope exceeds 512 KiB")
+        existing = self._db.execute("SELECT delivery_id FROM deliveries WHERE message_id=?", (message_id,)).fetchone()
+        if existing is None:
+            # Cap retained data; never evict pending messages or fresh dedupe
+            # records just to accept more work. The relay retains the lease.
+            usage = self._db.execute("SELECT rows,bytes FROM inbox_usage WHERE id=1").fetchone()
+            if usage[0] >= 10000 or usage[1] + len(encoded.encode()) > 128 * 1024 * 1024:
+                raise RuntimeError("inbox quota reached; inspect pending work before freeing space")
         self._db.execute(
             "INSERT OR IGNORE INTO deliveries(delivery_id,message_id,lease_token,payload,status) VALUES(?,?,?,?,'pending')",
             (delivery_id, message_id, lease_token, encoded),
         )
         self._db.execute(
-            "UPDATE deliveries SET lease_token=?, payload=? WHERE delivery_id=? AND status='pending'",
-            (lease_token, encoded, delivery_id),
+            "UPDATE deliveries SET lease_token=?, payload=? WHERE message_id=? AND status='pending'",
+            (lease_token, encoded, message_id),
         )
         self._db.commit()
         row = self._db.execute("SELECT * FROM deliveries WHERE message_id=?", (message_id,)).fetchone()
@@ -125,7 +154,9 @@ class InboxStore:
 
     def list(self, *, limit: int = 100) -> list[StoredDelivery]:
         limit = max(1, min(int(limit), 1000))
-        rows = self._db.execute("SELECT * FROM deliveries ORDER BY received_at DESC, rowid DESC LIMIT ?", (limit,)).fetchall()
+        # Listing is metadata only; 1000 full 256 KiB bodies would allocate
+        # hundreds of MiB. `show` reads one exact body when requested.
+        rows = self._db.execute("SELECT delivery_id,message_id,'' AS lease_token,'{}' AS payload,status,outcome FROM deliveries ORDER BY received_at DESC, rowid DESC LIMIT ?", (limit,)).fetchall()
         return [self._row(row) for row in rows]
 
     def mark(self, delivery_id: str, status: str, outcome: dict[str, Any] | None = None) -> None:
@@ -142,6 +173,19 @@ class InboxStore:
         result = {"pending": 0, "acked": 0, "failed": 0}
         result.update({str(row["status"]): int(row["n"]) for row in rows})
         return result
+
+    def maintain(self) -> None:
+        # Relay retains fully acknowledged messages for seven days. Keep
+        # terminal records eight days; never prune unresolved submissions.
+        with self._db:
+            self._db.execute("DELETE FROM deliveries WHERE status IN ('acked','failed') AND handled_at < datetime('now','-8 days')")
+        self._db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+
+    def resolve(self, delivery_id: str, *, retry: bool) -> None:
+        item = self.get(delivery_id)
+        if not item or item.status != "pending" or (item.outcome or {}).get("status") not in {"dispatching", "unknown"}:
+            raise ValueError("delivery is not an uncertain pending submission")
+        self.mark(delivery_id, "pending", None if retry else {"status": "dispatched", "resolution": "operator-confirmed"})
 
     def _row(self, row: sqlite3.Row) -> StoredDelivery:
         return StoredDelivery(

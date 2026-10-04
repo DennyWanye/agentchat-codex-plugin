@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import BridgeConfig
+from .store import CredentialStore
+from .claude import ClaudeAdapter
 
 
 @dataclass(frozen=True)
@@ -30,17 +32,25 @@ class LaunchAgentService:
         if sys.platform != "darwin":
             raise RuntimeError("background service installation currently supports macOS only")
         self.config = config
+        # Preserve the old default profile label, isolate all named profiles.
+        if config.state_dir.resolve() != (Path.home() / ".config" / "agentchat-codex").resolve():
+            self.label = "com.dennywanye.agentchat-" + hashlib.sha256(str(config.state_dir.resolve()).encode()).hexdigest()[:12]
         self.uid = os.getuid()
         self.domain = f"gui/{self.uid}"
         launch_agents = Path(os.environ.get("AGENTCHAT_LAUNCH_AGENTS_DIR", str(Path.home() / "Library" / "LaunchAgents"))).expanduser()
         self.plist_path = launch_agents / f"{self.label}.plist"
 
-    def install(self, codex_thread: str) -> ServiceStatus:
-        if not codex_thread or any(ch.isspace() for ch in codex_thread):
-            raise ValueError("--codex-thread must be a non-empty task id or exact task name")
-        codex = shutil.which("codex")
-        if not codex:
+    def install(self, codex_thread: str | None = None, *, claude_session: str | None = None) -> ServiceStatus:
+        if bool(codex_thread) == bool(claude_session):
+            raise ValueError("choose exactly one --codex-thread or --claude-session")
+        target = codex_thread or claude_session
+        if any(ch.isspace() for ch in target) or len(target) > 200:
+            raise ValueError("target must be an exact session identifier")
+        codex = shutil.which("codex") if codex_thread else None
+        if codex_thread and not codex:
             raise RuntimeError("codex executable was not found in PATH")
+        if claude_session:
+            ClaudeAdapter(claude_session).preflight()
         self.config.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.config.state_dir.chmod(0o700)
         self.plist_path.parent.mkdir(parents=True, exist_ok=True)
@@ -55,11 +65,11 @@ class LaunchAgentService:
                 "--state-dir",
                 str(self.config.state_dir),
                 "run",
-                "--codex-thread",
-                codex_thread,
+                "--codex-thread" if codex_thread else "--claude-session",
+                target,
             ],
             "EnvironmentVariables": {
-                "PATH": self._service_path(codex),
+                "PATH": self._service_path(codex or sys.executable),
                 "PYTHONUNBUFFERED": "1",
             },
             "RunAtLoad": True,
@@ -67,11 +77,15 @@ class LaunchAgentService:
             "ProcessType": "Background",
             "ThrottleInterval": 10,
             "Umask": 63,
-            "StandardOutPath": str(self.config.state_dir / "bridge.stdout.log"),
-            "StandardErrorPath": str(self.config.state_dir / "bridge.stderr.log"),
+            # Python owns bounded rotating logs; launchd's files never rotate.
+            "StandardOutPath": "/dev/null",
+            "StandardErrorPath": "/dev/null",
+            "ExitTimeOut": 10,
         }
         self._write_plist(payload)
         self._run(["launchctl", "bootout", self.domain, str(self.plist_path)], allow_failure=True)
+        CredentialStore(self.config.state_dir / "binding.json").save({
+            "adapter": "codex" if codex_thread else "claude", "target": target})
         self._run(["launchctl", "bootstrap", self.domain, str(self.plist_path)])
         self._run(["launchctl", "kickstart", "-k", f"{self.domain}/{self.label}"])
         return self.status()
@@ -123,7 +137,7 @@ class LaunchAgentService:
 
     @staticmethod
     def _run(command: list[str], *, allow_failure: bool = False) -> subprocess.CompletedProcess[str]:
-        completed = subprocess.run(command, text=True, capture_output=True, check=False, shell=False)
+        completed = subprocess.run(command, text=True, capture_output=True, check=False, shell=False, timeout=15)
         if completed.returncode and not allow_failure:
             detail = (completed.stderr or completed.stdout).strip()[-500:]
             raise RuntimeError(f"service command failed ({completed.returncode}): {detail}")

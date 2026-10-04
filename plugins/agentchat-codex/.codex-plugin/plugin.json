@@ -1,7 +1,7 @@
 {
   "name": "agentchat-codex",
-  "version": "0.1.0",
-  "description": "Connect a pre-bound Codex task to AgentChat through a local passive bridge.",
+  "version": "0.2.0",
+  "description": "Connect existing Codex and Claude Code sessions through a bounded AgentChat bridge.",
   "author": {
     "name": "Denny Wanye",
     "url": "https://github.com/DennyWanye"
@@ -19,7 +19,7 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "AgentChat for Codex",
-    "shortDescription": "Passively receive AgentChat messages in Codex",
+    "shortDescription": "Connect Codex and Claude Code with AgentChat",
     "longDescription": "Instruction and safety guidance for binding a local AgentChat bridge to one Codex task. The bridge owns long-polling and delivery; this plugin does not run a daemon or grant remote messages additional permissions.",
     "developerName": "Denny Wanye",
     "category": "Productivity",
